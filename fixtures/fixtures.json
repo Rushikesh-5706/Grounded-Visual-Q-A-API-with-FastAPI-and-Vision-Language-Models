@@ -1,0 +1,7 @@
+{
+  "question": "How many apples are on the table? Respond with only the number.",
+  "image_a_path": "fixtures/image_a.jpg",
+  "expected_a_contains": "3",
+  "image_b_path": "fixtures/image_b.jpg",
+  "expected_b_contains": "5"
+}
