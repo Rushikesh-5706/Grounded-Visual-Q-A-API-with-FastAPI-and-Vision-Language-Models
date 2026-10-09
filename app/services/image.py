@@ -49,15 +49,19 @@ def validate_image(data: bytes, declared_content_type: str | None) -> DetectedIm
             f"declared content type {declared_content_type!r} is not an image type"
         )
 
-    Image.MAX_IMAGE_PIXELS = _MAX_PIXELS
-
     try:
         with Image.open(io.BytesIO(data)) as img:
+            # Check pixel count from the header before loading all pixel data.
+            width, height = img.size
+            if width * height > _MAX_PIXELS:
+                raise InvalidImageError("image exceeds pixel limit")
             img.verify()
         with Image.open(io.BytesIO(data)) as img:
             img.load()
             fmt = img.format
             width, height = img.size
+    except InvalidImageError:
+        raise
     except Image.DecompressionBombError as exc:
         raise InvalidImageError("image exceeds pixel limit") from exc
     except (UnidentifiedImageError, OSError, SyntaxError) as exc:

@@ -11,7 +11,16 @@ from app.core.exceptions import AuditWriteError
 _lock = threading.Lock()
 
 
-def audit_image_payload(request_id: str, image_bytes: bytes, audit_path: Path) -> str:
+def audit_image_payload(
+    request_id: str,
+    image_bytes: bytes,
+    audit_path: Path | None = None,
+) -> str:
+    if audit_path is None:
+        from app.core.config import get_settings
+
+        audit_path = get_settings().audit_log_path
+
     digest = hashlib.sha256(image_bytes).hexdigest()
     timestamp = datetime.now(UTC).isoformat(timespec="milliseconds")
     line = f"{timestamp} | {request_id} | {digest}\n"

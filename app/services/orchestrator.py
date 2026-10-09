@@ -30,7 +30,9 @@ async def answer_question(
 ) -> AnswerResult:
     detected = await asyncio.to_thread(validate_image, image_bytes, declared_content_type)
 
-    digest = audit_image_payload(request_id, image_bytes, settings.audit_log_path)
+    digest = await asyncio.to_thread(
+        audit_image_payload, request_id, image_bytes, settings.audit_log_path
+    )
 
     prepared = await asyncio.to_thread(
         prepare_for_model, image_bytes, detected, settings.max_image_dimension
