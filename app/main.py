@@ -14,6 +14,8 @@ from app.core.exceptions import VQAError
 from app.schemas import HealthResponse
 from app.services.vlm import VisionClient
 
+logger = logging.getLogger(__name__)
+
 
 def _configure_logging(level: str) -> None:
     logging.basicConfig(
@@ -29,7 +31,7 @@ async def lifespan(application: FastAPI):
     _configure_logging(settings.log_level)
 
     key_status = "configured" if settings.active_api_key else "not configured"
-    logging.getLogger(__name__).info(
+    logger.info(
         "startup provider=%s model=%s key=%s",
         settings.active_provider,
         settings.active_model,
@@ -37,7 +39,7 @@ async def lifespan(application: FastAPI):
     )
 
     if settings.active_api_key and settings.vlm_provider != settings.active_provider:
-        logging.getLogger(__name__).warning(
+        logger.warning(
             "provider %r has no key; using %r instead",
             settings.vlm_provider,
             settings.active_provider,
@@ -64,6 +66,12 @@ async def vqa_error_handler(request: Request, exc: VQAError) -> JSONResponse:
         status_code=exc.status_code,
         content={"detail": exc.message},
     )
+
+
+@app.exception_handler(Exception)
+async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("unexpected error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
 
 @app.exception_handler(RequestValidationError)

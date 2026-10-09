@@ -432,10 +432,10 @@ def test_mock_question_text_in_payload_matches_submitted(tmp_path):
 
 
 def test_mock_system_message_contains_grounding_prompt(tmp_path):
-    from app.services.vlm import _SYSTEM_PROMPT
+    from app.services.vlm import SYSTEM_PROMPT
 
-    assert "visually grounded" in _SYSTEM_PROMPT.lower()
-    assert "ONLY" in _SYSTEM_PROMPT
+    assert "visually grounded" in SYSTEM_PROMPT.lower()
+    assert "ONLY" in SYSTEM_PROMPT
 
 
 def test_mock_two_images_produce_different_data_uris(tmp_path):

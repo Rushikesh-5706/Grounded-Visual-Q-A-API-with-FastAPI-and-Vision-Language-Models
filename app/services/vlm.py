@@ -4,7 +4,8 @@ import asyncio
 import logging
 import random
 import re
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -13,6 +14,7 @@ from app.core.exceptions import (
     UpstreamError,
     UpstreamRateLimitedError,
     UpstreamTimeoutError,
+    VQAError,
 )
 
 if TYPE_CHECKING:
@@ -20,63 +22,53 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = (
+SYSTEM_PROMPT = (
     "You are a visually grounded AI. Answer the user's question accurately based ONLY on the "
     "provided image. Be concise. If the question asks for a count or quantity, reply with the "
     "numerical digit only (for example 3, not three). If the answer cannot be determined from "
     "the image, say so instead of guessing."
 )
 
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
+_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
+_MAX_DELAY_SECONDS = 10.0
 
-_TRANSIENT_STATUSES = {429, 500, 502, 503, 504}
+
+def _build_timeout(settings: Settings) -> httpx.Timeout:
+    return httpx.Timeout(
+        connect=10.0,
+        read=settings.request_timeout_seconds,
+        write=30.0,
+        pool=10.0,
+    )
 
 
 class VisionClient:
+    """Owns the shared HTTP connection pool used for every provider call."""
+
     def __init__(self, settings: Settings) -> None:
-        self._settings = settings
-        self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(
-                connect=10.0,
-                read=settings.request_timeout_seconds,
-                write=30.0,
-                pool=10.0,
-            ),
+        self._http = httpx.AsyncClient(
+            timeout=_build_timeout(settings),
             limits=httpx.Limits(max_connections=20),
         )
 
+    async def post(
+        self, url: str, headers: dict[str, str], payload: dict[str, Any]
+    ) -> httpx.Response:
+        return await self._http.post(url, headers=headers, json=payload)
+
     async def aclose(self) -> None:
-        await self._client.aclose()
-
-    @property
-    def _http(self) -> httpx.AsyncClient:
-        return self._client
+        await self._http.aclose()
 
 
-async def ask_vision_model(
-    base64_image: str,
-    mime_type: str,
-    question: str,
-    *,
-    client: VisionClient | None = None,
-    settings: Settings | None = None,
-) -> str:
-    from app.core.config import get_settings
-
-    if settings is None:
-        settings = get_settings()
-
-    api_key = settings.active_api_key
-    if not api_key:
-        raise ProviderNotConfiguredError(
-            f"no API key configured for provider '{settings.active_provider}'"
-        )
-
+def build_payload(
+    settings: Settings, base64_image: str, mime_type: str, question: str
+) -> dict[str, Any]:
     data_uri = f"data:{mime_type};base64,{base64_image}"
-    payload = {
+    payload: dict[str, Any] = {
         "model": settings.active_model,
         "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": [
@@ -87,111 +79,134 @@ async def ask_vision_model(
         ],
         "temperature": 0,
         "max_tokens": settings.max_answer_tokens,
-        "reasoning_effort": "none",
-        "reasoning_format": "hidden",
     }
+    if settings.active_provider == "groq":
+        # These parameters are Groq-specific and not part of the OpenAI spec.
+        payload["reasoning_effort"] = "none"
+        payload["reasoning_format"] = "hidden"
+    return payload
 
+
+async def ask_vision_model(
+    base64_image: str,
+    mime_type: str,
+    question: str,
+    *,
+    client: VisionClient | None = None,
+    settings: Settings | None = None,
+) -> str:
+    if settings is None:
+        from app.core.config import get_settings
+
+        settings = get_settings()
+
+    api_key = settings.active_api_key
+    if not api_key:
+        raise ProviderNotConfiguredError(
+            f"no API key configured for provider '{settings.active_provider}'"
+        )
+
+    url = f"{settings.active_base_url}/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    url = f"{settings.active_base_url}/chat/completions"
+    payload = build_payload(settings, base64_image, mime_type, question)
 
-    http = client._http if client else httpx.AsyncClient(
-        timeout=httpx.Timeout(
-            connect=10.0,
-            read=settings.request_timeout_seconds,
-            write=30.0,
-            pool=10.0,
-        )
-    )
+    if client is not None:
+        response = await _post_with_retries(client.post, url, headers, payload, settings)
+    else:
+        async with httpx.AsyncClient(timeout=_build_timeout(settings)) as http:
 
-    last_exc: Exception | None = None
-    for attempt in range(settings.max_retries):
+            async def _post(
+                u: str, h: dict[str, str], p: dict[str, Any]
+            ) -> httpx.Response:
+                return await http.post(u, headers=h, json=p)
+
+            response = await _post_with_retries(_post, url, headers, payload, settings)
+
+    return _extract_answer(response)
+
+
+async def _post_with_retries(
+    post: Callable[[str, dict[str, str], dict[str, Any]], Awaitable[httpx.Response]],
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    settings: Settings,
+) -> httpx.Response:
+    last_error: VQAError = UpstreamError("upstream failed after retries")
+    for attempt in range(1, settings.max_retries + 1):
+        delay = _backoff_delay(attempt)
         try:
-            response = await http.post(url, headers=headers, json=payload)
-        except httpx.TimeoutException as exc:
-            last_exc = exc
-            if attempt < settings.max_retries - 1:
-                await _backoff(attempt)
-            continue
-        except httpx.ConnectError as exc:
-            last_exc = exc
-            if attempt < settings.max_retries - 1:
-                await _backoff(attempt)
-            continue
-
-        if response.status_code == 200:
-            return _extract_content(response)
-
-        if response.status_code not in _TRANSIENT_STATUSES:
-            status = response.status_code
-            snippet = response.text[:200]
+            response = await post(url, headers, payload)
+        except httpx.TimeoutException:
+            last_error = UpstreamTimeoutError("request to upstream timed out")
+        except httpx.TransportError:
+            last_error = UpstreamError("could not reach upstream")
+        else:
+            if response.status_code == 200:
+                return response
+            if response.status_code not in _TRANSIENT_STATUSES:
+                logger.warning(
+                    "upstream status=%d body=%s",
+                    response.status_code,
+                    response.text[:200],
+                )
+                raise UpstreamError(
+                    f"upstream returned status {response.status_code}"
+                )
             logger.warning(
-                "upstream returned status %d, snippet: %s",
-                status,
-                snippet,
+                "upstream transient status=%d attempt=%d body=%s",
+                response.status_code,
+                attempt,
+                response.text[:200],
             )
-            if status == 429:
-                raise UpstreamRateLimitedError("upstream rate limited")
-            raise UpstreamError(f"upstream returned status {status}")
-
-        if response.status_code == 429:
-            wait = _parse_retry_after(response, attempt)
-            logger.warning("upstream rate limited (attempt %d), waiting %.1fs", attempt + 1, wait)
-            last_exc = UpstreamRateLimitedError("upstream rate limited")
-            if attempt < settings.max_retries - 1:
-                await asyncio.sleep(wait)
-            continue
-
-        snippet = response.text[:200]
-        logger.warning(
-            "upstream transient error status %d on attempt %d, snippet: %s",
-            response.status_code,
-            attempt + 1,
-            snippet,
-        )
-        last_exc = UpstreamError(f"upstream returned status {response.status_code}")
-        if attempt < settings.max_retries - 1:
-            await _backoff(attempt)
-
-    if isinstance(last_exc, httpx.TimeoutException):
-        raise UpstreamTimeoutError("request to upstream timed out")
-    if isinstance(last_exc, UpstreamRateLimitedError):
-        raise UpstreamRateLimitedError("upstream rate limited after retries")
-    raise UpstreamError("upstream failed after retries")
+            if response.status_code == 429:
+                last_error = UpstreamRateLimitedError(
+                    "upstream rate limited after retries"
+                )
+                delay = _retry_after(response, delay)
+            else:
+                last_error = UpstreamError(
+                    f"upstream returned status {response.status_code}"
+                )
+        if attempt < settings.max_retries:
+            await asyncio.sleep(delay)
+    raise last_error
 
 
-def _extract_content(response: httpx.Response) -> str:
+def _extract_answer(response: httpx.Response) -> str:
     try:
         body = response.json()
-        choices = body.get("choices") or []
-        if not choices:
-            raise UpstreamError("upstream returned no choices")
-        message = choices[0].get("message", {})
-        content = message.get("content", "")
-        if isinstance(content, list):
-            content = " ".join(
-                part.get("text", "") for part in content if part.get("type") == "text"
-            )
-        content = _THINK_RE.sub("", content).strip()
-        if not content:
-            raise UpstreamError("upstream returned empty content")
-        return content
-    except (KeyError, IndexError, ValueError) as exc:
-        raise UpstreamError(f"malformed upstream response: {exc}") from exc
-
-
-def _backoff(attempt: int) -> asyncio.coroutine:
-    delay = min(0.5 * (2**attempt) + random.uniform(0, 0.3), 10.0)
-    return asyncio.sleep(delay)
-
-
-def _parse_retry_after(response: httpx.Response, attempt: int) -> float:
-    raw = response.headers.get("retry-after", "")
+    except ValueError as exc:
+        raise UpstreamError("upstream returned invalid JSON") from exc
     try:
-        return min(float(raw), 10.0)
-    except (ValueError, TypeError):
-        pass
-    delay = min(0.5 * (2**attempt) + random.uniform(0, 0.3), 10.0)
-    return delay
+        content = body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise UpstreamError("upstream response has no message content") from exc
+
+    if isinstance(content, list):
+        content = " ".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    if not isinstance(content, str):
+        raise UpstreamError("upstream message content is not text")
+
+    answer = _THINK_BLOCK.sub("", content).strip()
+    if not answer:
+        raise UpstreamError("upstream returned an empty answer")
+    return answer
+
+
+def _backoff_delay(attempt: int) -> float:
+    return min(0.5 * (2 ** (attempt - 1)) + random.uniform(0, 0.3), _MAX_DELAY_SECONDS)
+
+
+def _retry_after(response: httpx.Response, fallback: float) -> float:
+    try:
+        return min(float(response.headers.get("retry-after", "")), _MAX_DELAY_SECONDS)
+    except ValueError:
+        return fallback

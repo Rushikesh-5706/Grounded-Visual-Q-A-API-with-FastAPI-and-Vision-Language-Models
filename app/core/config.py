@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
 
     request_timeout_seconds: float = 60.0
-    max_retries: int = 3
+    max_retries: int = Field(default=3, ge=1)
     max_upload_bytes: int = 10 * 1024 * 1024  # 10 MiB
     max_image_dimension: int = 1024
     max_answer_tokens: int = 256
