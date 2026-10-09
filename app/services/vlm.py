@@ -118,9 +118,7 @@ async def ask_vision_model(
     else:
         async with httpx.AsyncClient(timeout=_build_timeout(settings)) as http:
 
-            async def _post(
-                u: str, h: dict[str, str], p: dict[str, Any]
-            ) -> httpx.Response:
+            async def _post(u: str, h: dict[str, str], p: dict[str, Any]) -> httpx.Response:
                 return await http.post(u, headers=h, json=p)
 
             response = await _post_with_retries(_post, url, headers, payload, settings)
@@ -153,9 +151,7 @@ async def _post_with_retries(
                     response.status_code,
                     response.text[:200],
                 )
-                raise UpstreamError(
-                    f"upstream returned status {response.status_code}"
-                )
+                raise UpstreamError(f"upstream returned status {response.status_code}")
             logger.warning(
                 "upstream transient status=%d attempt=%d body=%s",
                 response.status_code,
@@ -163,14 +159,10 @@ async def _post_with_retries(
                 response.text[:200],
             )
             if response.status_code == 429:
-                last_error = UpstreamRateLimitedError(
-                    "upstream rate limited after retries"
-                )
+                last_error = UpstreamRateLimitedError("upstream rate limited after retries")
                 delay = _retry_after(response, delay)
             else:
-                last_error = UpstreamError(
-                    f"upstream returned status {response.status_code}"
-                )
+                last_error = UpstreamError(f"upstream returned status {response.status_code}")
         if attempt < settings.max_retries:
             await asyncio.sleep(delay)
     raise last_error

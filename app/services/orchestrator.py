@@ -49,7 +49,8 @@ async def answer_question(
     latency_ms = round((time.monotonic() - t0) * 1000)
 
     logger.info(
-        "request_id=%s sha256=%s original=%dx%d sent=%dx%d resized=%s provider=%s model=%s latency_ms=%d",
+        "request_id=%s sha256=%s original=%dx%d sent=%dx%d resized=%s "
+        "provider=%s model=%s latency_ms=%d",
         request_id,
         digest,
         detected.width,

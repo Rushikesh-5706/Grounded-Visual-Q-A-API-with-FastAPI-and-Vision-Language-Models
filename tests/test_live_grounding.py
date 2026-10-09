@@ -3,6 +3,7 @@
 These tests are marked 'live' and are skipped unless GROQ_API_KEY is present.
 They use the in-process FastAPI app with the real VLM client.
 """
+
 from __future__ import annotations
 
 import io
@@ -26,6 +27,7 @@ def _groq_key_available() -> bool:
             if line.startswith("GROQ_API_KEY=") and len(line.split("=", 1)[1].strip()) > 10:
                 return True
     import os
+
     return bool(os.environ.get("GROQ_API_KEY", "").strip())
 
 

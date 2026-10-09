@@ -68,9 +68,7 @@ def validate_image(data: bytes, declared_content_type: str | None) -> DetectedIm
         raise InvalidImageError(f"image cannot be decoded: {exc}") from exc
 
     if fmt not in _ALLOWED_FORMATS:
-        raise InvalidImageError(
-            f"format {fmt!r} is not supported; allowed: JPEG, PNG, WebP"
-        )
+        raise InvalidImageError(f"format {fmt!r} is not supported; allowed: JPEG, PNG, WebP")
 
     return DetectedImage(
         format=fmt,
@@ -80,9 +78,7 @@ def validate_image(data: bytes, declared_content_type: str | None) -> DetectedIm
     )
 
 
-def prepare_for_model(
-    data: bytes, detected: DetectedImage, max_dimension: int
-) -> PreparedImage:
+def prepare_for_model(data: bytes, detected: DetectedImage, max_dimension: int) -> PreparedImage:
     with Image.open(io.BytesIO(data)) as img:
         img = ImageOps.exif_transpose(img)
         width, height = img.size

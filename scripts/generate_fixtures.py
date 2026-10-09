@@ -1,4 +1,5 @@
 """Generate synthetic apple fixture images for visual grounding tests."""
+
 from __future__ import annotations
 
 import json
@@ -158,17 +159,17 @@ def main() -> None:
     apple_surface_y = table_y + 55
 
     positions_3 = [
-        (160, apple_surface_y),
+        (150, apple_surface_y),
         (400, apple_surface_y - 8),
-        (640, apple_surface_y + 5),
+        (650, apple_surface_y + 5),
     ]
 
     positions_5 = [
-        (160, apple_surface_y),
-        (400, apple_surface_y - 8),
-        (640, apple_surface_y + 5),
-        (280, apple_surface_y + 3),
-        (520, apple_surface_y - 4),
+        (80, apple_surface_y),
+        (235, apple_surface_y - 8),
+        (390, apple_surface_y + 5),
+        (545, apple_surface_y + 3),
+        (700, apple_surface_y - 4),
     ]
 
     img_a = _build_image_from_canvas_coords(positions_3)

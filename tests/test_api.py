@@ -3,6 +3,7 @@
 Tests prefixed with 'test_mock_' use a mocked HTTP transport; the name
 makes the mocking explicit per the project spec.
 """
+
 from __future__ import annotations
 
 import base64
@@ -20,7 +21,8 @@ import respx
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app.core.config import Settings, get_settings
+from app.api.dependencies import get_settings_dep
+from app.core.config import Settings
 from app.main import app
 
 
@@ -48,8 +50,6 @@ def _override_settings(tmp_path: Path) -> Settings:
         audit_log_path=tmp_path / "audit.log",
     )
 
-
-from app.api.dependencies import get_settings_dep
 
 @pytest.fixture()
 def client(tmp_path: Path):
@@ -648,9 +648,7 @@ def test_mock_200_with_empty_content_returns_502(tmp_path):
 
     with respx.mock:
         respx.post("https://api.groq.com/openai/v1/chat/completions").mock(
-            return_value=httpx.Response(
-                200, json={"choices": [{"message": {"content": ""}}]}
-            )
+            return_value=httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
         )
         with TestClient(app) as c:
             r = c.post(
@@ -734,7 +732,13 @@ def test_fixtures_json_parses_images_exist_expectations_differ():
     assert fixtures_path.exists()
     data = json.loads(fixtures_path.read_text())
 
-    for key in ("question", "image_a_path", "expected_a_contains", "image_b_path", "expected_b_contains"):
+    for key in (
+        "question",
+        "image_a_path",
+        "expected_a_contains",
+        "image_b_path",
+        "expected_b_contains",
+    ):
         assert key in data
 
     img_a = project_root / data["image_a_path"]

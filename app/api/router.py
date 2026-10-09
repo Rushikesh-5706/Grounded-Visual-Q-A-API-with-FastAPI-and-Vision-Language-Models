@@ -31,27 +31,23 @@ _CHUNK = 1024 * 1024  # 1 MiB
 )
 async def answer_visual_question(
     response: Response,
-    file: UploadFile = File(...),
-    question: str = Form(...),
-    settings: Settings = Depends(get_settings_dep),
-    vision_client: VisionClient = Depends(get_vision_client),
+    file: UploadFile = File(...),  # noqa: B008
+    question: str = Form(...),  # noqa: B008
+    settings: Settings = Depends(get_settings_dep),  # noqa: B008
+    vision_client: VisionClient = Depends(get_vision_client),  # noqa: B008
 ) -> VQAResponse:
     question_stripped = question.strip()
     if not question_stripped:
         raise InvalidRequestError("question must not be empty")
     if len(question_stripped) > settings.max_question_chars:
-        raise InvalidRequestError(
-            f"question exceeds {settings.max_question_chars} character limit"
-        )
+        raise InvalidRequestError(f"question exceeds {settings.max_question_chars} character limit")
 
     if not file.filename:
         raise InvalidRequestError("file must have a filename")
 
     ct = file.content_type
     if ct and ct != "application/octet-stream" and not ct.startswith("image/"):
-        raise InvalidRequestError(
-            f"content type {ct!r} is not an image type"
-        )
+        raise InvalidRequestError(f"content type {ct!r} is not an image type")
 
     chunks: list[bytes] = []
     total = 0
@@ -61,9 +57,7 @@ async def answer_visual_question(
             break
         total += len(chunk)
         if total > settings.max_upload_bytes:
-            raise PayloadTooLargeError(
-                f"upload exceeds {settings.max_upload_bytes} byte limit"
-            )
+            raise PayloadTooLargeError(f"upload exceeds {settings.max_upload_bytes} byte limit")
         chunks.append(chunk)
 
     image_bytes = b"".join(chunks)

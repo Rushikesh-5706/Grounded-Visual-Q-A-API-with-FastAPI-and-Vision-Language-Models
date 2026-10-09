@@ -75,9 +75,7 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_error_handler(
-    request: Request, exc: RequestValidationError
-) -> JSONResponse:
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     errors = exc.errors()
     if errors:
         first = errors[0]

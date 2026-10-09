@@ -6,6 +6,7 @@ Usage:
 
 Exit 0 only when all ten checks pass.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,7 +46,13 @@ def verify_req_1_fixtures(workspace: str) -> None:
     except json.JSONDecodeError as exc:
         raise AssertionError(f"req-1-fixtures: fixtures.json is not valid JSON: {exc}") from exc
 
-    for key in ("question", "image_a_path", "expected_a_contains", "image_b_path", "expected_b_contains"):
+    for key in (
+        "question",
+        "image_a_path",
+        "expected_a_contains",
+        "image_b_path",
+        "expected_b_contains",
+    ):
         if key not in data:
             raise AssertionError(f"req-1-fixtures: missing key {key!r} in fixtures.json")
 
@@ -57,12 +64,12 @@ def verify_req_1_fixtures(workspace: str) -> None:
         raise AssertionError(f"req-1-fixtures: {img_b} not found")
 
     if data["expected_a_contains"] == data["expected_b_contains"]:
-        raise AssertionError(
-            "req-1-fixtures: expected_a_contains equals expected_b_contains"
-        )
+        raise AssertionError("req-1-fixtures: expected_a_contains equals expected_b_contains")
 
 
-def verify_req_2_validation_empty_question(workspace: str, base_url: str = "http://localhost:8000") -> None:
+def verify_req_2_validation_empty_question(
+    workspace: str, base_url: str = "http://localhost:8000"
+) -> None:
     root = Path(workspace)
     fixtures = json.loads((root / "fixtures" / "fixtures.json").read_text())
     img = (root / fixtures["image_a_path"]).read_bytes()
@@ -85,11 +92,14 @@ def verify_req_2_validation_empty_question(workspace: str, base_url: str = "http
     )
     if r2.status_code not in (400, 422):
         raise AssertionError(
-            f"req-2-validation-empty-question: omitted question expected 400/422, got {r2.status_code}"
+            "req-2-validation-empty-question: omitted question expected 400/422, "
+            f"got {r2.status_code}"
         )
 
 
-def verify_req_3_validation_missing_image(workspace: str, base_url: str = "http://localhost:8000") -> None:
+def verify_req_3_validation_missing_image(
+    workspace: str, base_url: str = "http://localhost:8000"
+) -> None:
     r = httpx.post(
         f"{base_url}/api/vqa",
         data={"question": "What is this?"},
@@ -101,7 +111,9 @@ def verify_req_3_validation_missing_image(workspace: str, base_url: str = "http:
         )
 
 
-def verify_req_4_vqa_endpoint_success(workspace: str, base_url: str = "http://localhost:8000") -> None:
+def verify_req_4_vqa_endpoint_success(
+    workspace: str, base_url: str = "http://localhost:8000"
+) -> None:
     root = Path(workspace)
     fixtures = json.loads((root / "fixtures" / "fixtures.json").read_text())
     img = (root / fixtures["image_a_path"]).read_bytes()
@@ -119,9 +131,7 @@ def verify_req_4_vqa_endpoint_success(workspace: str, base_url: str = "http://lo
 
     body = r.json()
     if "answer" not in body:
-        raise AssertionError(
-            f"req-4-vqa-endpoint-success: response missing 'answer' key: {body}"
-        )
+        raise AssertionError(f"req-4-vqa-endpoint-success: response missing 'answer' key: {body}")
     if not isinstance(body["answer"], str):
         raise AssertionError(
             f"req-4-vqa-endpoint-success: answer is not a string: {body['answer']!r}"
@@ -210,9 +220,7 @@ def verify_req_6_audit_log(
         timeout=120,
     )
     if r.status_code != 200:
-        raise AssertionError(
-            f"req-6-audit-log: request failed {r.status_code}: {r.text[:200]}"
-        )
+        raise AssertionError(f"req-6-audit-log: request failed {r.status_code}: {r.text[:200]}")
 
     time.sleep(0.2)
     log_content = read_log()
@@ -220,28 +228,26 @@ def verify_req_6_audit_log(
 
     if len(lines_after) <= lines_before:
         raise AssertionError(
-            f"req-6-audit-log: no new line added to audit log (had {lines_before}, now {len(lines_after)})"
+            f"req-6-audit-log: no new line added to audit log (had {lines_before}, "
+            f"now {len(lines_after)})"
         )
 
     new_lines = lines_after[lines_before:]
     found = any(expected_digest in line for line in new_lines)
     if not found:
         raise AssertionError(
-            f"req-6-audit-log: digest {expected_digest[:16]}... not found in new audit lines: {new_lines}"
+            f"req-6-audit-log: digest {expected_digest[:16]}... not found in "
+            f"new audit lines: {new_lines}"
         )
 
 
 def verify_req_7_health_check(workspace: str, base_url: str = "http://localhost:8000") -> None:
     r = httpx.get(f"{base_url}/health", timeout=15)
     if r.status_code != 200:
-        raise AssertionError(
-            f"req-7-health-check: expected 200, got {r.status_code}"
-        )
+        raise AssertionError(f"req-7-health-check: expected 200, got {r.status_code}")
     body = r.json()
     if "status" not in body:
-        raise AssertionError(
-            f"req-7-health-check: response missing 'status' key: {body}"
-        )
+        raise AssertionError(f"req-7-health-check: response missing 'status' key: {body}")
 
 
 def verify_req_8_docker_compose(
@@ -257,7 +263,9 @@ def verify_req_8_docker_compose(
     try:
         data = yaml.safe_load(compose_path.read_text())
     except yaml.YAMLError as exc:
-        raise AssertionError(f"req-8-docker-compose: docker-compose.yml is invalid YAML: {exc}") from exc
+        raise AssertionError(
+            f"req-8-docker-compose: docker-compose.yml is invalid YAML: {exc}"
+        ) from exc
 
     services = data.get("services", {})
     if not services:
@@ -272,7 +280,9 @@ def verify_req_8_docker_compose(
     ports = svc.get("ports", [])
     mapped = any("8000" in str(p) for p in ports)
     if not mapped:
-        raise AssertionError(f"req-8-docker-compose: port 8000 not mapped in service '{service_name}'")
+        raise AssertionError(
+            f"req-8-docker-compose: port 8000 not mapped in service '{service_name}'"
+        )
 
     env_file = svc.get("env_file", [])
     if not env_file:
@@ -326,9 +336,7 @@ def verify_req_9_env_example(workspace: str) -> None:
         if not stripped or stripped.startswith("#"):
             continue
         if "=" not in stripped:
-            raise AssertionError(
-                f"req-9-env-example: line is not KEY=VALUE: {stripped!r}"
-            )
+            raise AssertionError(f"req-9-env-example: line is not KEY=VALUE: {stripped!r}")
 
     if "GROQ_API_KEY" not in text:
         raise AssertionError("req-9-env-example: GROQ_API_KEY not documented in .env.example")
@@ -351,7 +359,8 @@ def verify_req_10_submission_config(workspace: str) -> None:
 
     if set(data.keys()) != {"vlm_provider", "model_name"}:
         raise AssertionError(
-            f"req-10-submission-config: expected keys {{vlm_provider, model_name}}, got {set(data.keys())}"
+            f"req-10-submission-config: expected keys {{vlm_provider, model_name}}, "
+            f"got {set(data.keys())}"
         )
     if not isinstance(data["vlm_provider"], str):
         raise AssertionError("req-10-submission-config: vlm_provider must be a string")
@@ -370,13 +379,25 @@ def _run_all(
 
     checks = [
         ("req-1-fixtures", lambda: verify_req_1_fixtures(workspace)),
-        ("req-2-validation-empty-question", lambda: verify_req_2_validation_empty_question(workspace, base_url)),
-        ("req-3-validation-missing-image", lambda: verify_req_3_validation_missing_image(workspace, base_url)),
-        ("req-4-vqa-endpoint-success", lambda: verify_req_4_vqa_endpoint_success(workspace, base_url)),
+        (
+            "req-2-validation-empty-question",
+            lambda: verify_req_2_validation_empty_question(workspace, base_url),
+        ),
+        (
+            "req-3-validation-missing-image",
+            lambda: verify_req_3_validation_missing_image(workspace, base_url),
+        ),
+        (
+            "req-4-vqa-endpoint-success",
+            lambda: verify_req_4_vqa_endpoint_success(workspace, base_url),
+        ),
         ("req-5-grounding-proof", lambda: verify_req_5_grounding_proof(workspace, base_url)),
         ("req-6-audit-log", lambda: verify_req_6_audit_log(workspace, base_url, audit_source)),
         ("req-7-health-check", lambda: verify_req_7_health_check(workspace, base_url)),
-        ("req-8-docker-compose", lambda: verify_req_8_docker_compose(workspace, base_url, check_container)),
+        (
+            "req-8-docker-compose",
+            lambda: verify_req_8_docker_compose(workspace, base_url, check_container),
+        ),
         ("req-9-env-example", lambda: verify_req_9_env_example(workspace)),
         ("req-10-submission-config", lambda: verify_req_10_submission_config(workspace)),
     ]
@@ -388,7 +409,9 @@ def _run_all(
         except AssertionError as exc:
             results.append({"id": req_id, "result": "fail", "detail": str(exc)})
         except Exception as exc:
-            results.append({"id": req_id, "result": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            results.append(
+                {"id": req_id, "result": "error", "detail": f"{type(exc).__name__}: {exc}"}
+            )
 
     return results, warnings
 
