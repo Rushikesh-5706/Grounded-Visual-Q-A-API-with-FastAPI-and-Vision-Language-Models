@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from app.api.router import router
 from app.core.config import get_settings
 from app.core.exceptions import VQAError
-from app.schemas import ErrorResponse, HealthResponse
+from app.schemas import HealthResponse
 from app.services.vlm import VisionClient
 
 

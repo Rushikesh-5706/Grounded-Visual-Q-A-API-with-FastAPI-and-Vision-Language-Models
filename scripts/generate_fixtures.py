@@ -1,9 +1,7 @@
 """Generate synthetic apple fixture images for visual grounding tests."""
 from __future__ import annotations
 
-import io
 import json
-import math
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter

@@ -11,7 +11,6 @@ import io
 import json
 import re
 import threading
-import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -22,9 +21,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.core.config import Settings, get_settings
-from app.core.exceptions import AuditWriteError
 from app.main import app
-from app.schemas import VQAResponse
 
 
 def _make_jpeg(width: int = 100, height: int = 100, color: tuple = (200, 50, 50)) -> bytes:
@@ -397,14 +394,13 @@ def test_mock_payload_image_url_sha256_matches_audit_hash(tmp_path):
         captured_payload["question"] = question
         return "test answer"
 
-    with patch("app.services.orchestrator.ask_vision_model", fake_ask):
-        with TestClient(app) as c:
-            img = _make_jpeg()
-            r = c.post(
-                "/api/vqa",
-                files={"file": ("img.jpg", img, "image/jpeg")},
-                data={"question": "Test question"},
-            )
+    with patch("app.services.orchestrator.ask_vision_model", fake_ask), TestClient(app) as c:
+        img = _make_jpeg()
+        r = c.post(
+            "/api/vqa",
+            files={"file": ("img.jpg", img, "image/jpeg")},
+            data={"question": "Test question"},
+        )
     assert r.status_code == 200
     audit_digest = r.headers["x-image-sha256"]
     decoded = base64.b64decode(captured_payload["base64"])
@@ -422,13 +418,12 @@ def test_mock_question_text_in_payload_matches_submitted(tmp_path):
         captured["question"] = question
         return "answer"
 
-    with patch("app.services.orchestrator.ask_vision_model", fake_ask):
-        with TestClient(app) as c:
-            r = c.post(
-                "/api/vqa",
-                files={"file": ("img.jpg", _make_jpeg(), "image/jpeg")},
-                data={"question": "How many cats?"},
-            )
+    with patch("app.services.orchestrator.ask_vision_model", fake_ask), TestClient(app) as c:
+        r = c.post(
+            "/api/vqa",
+            files={"file": ("img.jpg", _make_jpeg(), "image/jpeg")},
+            data={"question": "How many cats?"},
+        )
     assert r.status_code == 200
     assert captured["question"] == "How many cats?"
     app.dependency_overrides.clear()
@@ -451,18 +446,17 @@ def test_mock_two_images_produce_different_data_uris(tmp_path):
         uris.append(base64_image)
         return "answer"
 
-    with patch("app.services.orchestrator.ask_vision_model", fake_ask):
-        with TestClient(app) as c:
-            c.post(
-                "/api/vqa",
-                files={"file": ("img.jpg", _make_jpeg(color=(200, 50, 50)), "image/jpeg")},
-                data={"question": "q"},
-            )
-            c.post(
-                "/api/vqa",
-                files={"file": ("img.jpg", _make_jpeg(color=(50, 200, 50)), "image/jpeg")},
-                data={"question": "q"},
-            )
+    with patch("app.services.orchestrator.ask_vision_model", fake_ask), TestClient(app) as c:
+        c.post(
+            "/api/vqa",
+            files={"file": ("img.jpg", _make_jpeg(color=(200, 50, 50)), "image/jpeg")},
+            data={"question": "q"},
+        )
+        c.post(
+            "/api/vqa",
+            files={"file": ("img.jpg", _make_jpeg(color=(50, 200, 50)), "image/jpeg")},
+            data={"question": "q"},
+        )
     assert len(uris) == 2
     assert uris[0] != uris[1]
     app.dependency_overrides.clear()
@@ -476,13 +470,12 @@ def test_mock_api_key_not_in_body_or_logs(tmp_path, caplog):
 
     with patch("app.services.orchestrator.ask_vision_model", new_callable=AsyncMock) as m:
         m.return_value = "answer"
-        with caplog.at_level(logging.DEBUG):
-            with TestClient(app) as c:
-                r = c.post(
-                    "/api/vqa",
-                    files={"file": ("img.jpg", _make_jpeg(), "image/jpeg")},
-                    data={"question": "q"},
-                )
+        with caplog.at_level(logging.DEBUG), TestClient(app) as c:
+            r = c.post(
+                "/api/vqa",
+                files={"file": ("img.jpg", _make_jpeg(), "image/jpeg")},
+                data={"question": "q"},
+            )
     assert r.status_code == 200
     for record in caplog.records:
         assert "test-key-groq" not in record.getMessage()
@@ -521,7 +514,6 @@ def test_image_within_limit_is_byte_identical(tmp_path, mock_vlm_answer):
 
 
 def test_exif_portrait_jpeg_rotated_before_measuring(tmp_path):
-    from PIL.ExifTags import TAGS
     from app.services.image import prepare_for_model, validate_image
 
     buf = io.BytesIO()

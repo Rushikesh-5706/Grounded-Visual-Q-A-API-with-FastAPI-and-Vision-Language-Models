@@ -4,7 +4,6 @@ import asyncio
 import logging
 import random
 import re
-import time
 from typing import TYPE_CHECKING
 
 import httpx
@@ -34,7 +33,7 @@ _TRANSIENT_STATUSES = {429, 500, 502, 503, 504}
 
 
 class VisionClient:
-    def __init__(self, settings: "Settings") -> None:
+    def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(
@@ -60,7 +59,7 @@ async def ask_vision_model(
     question: str,
     *,
     client: VisionClient | None = None,
-    settings: "Settings | None" = None,
+    settings: Settings | None = None,
 ) -> str:
     from app.core.config import get_settings
 
@@ -183,7 +182,7 @@ def _extract_content(response: httpx.Response) -> str:
         raise UpstreamError(f"malformed upstream response: {exc}") from exc
 
 
-def _backoff(attempt: int) -> "asyncio.coroutine":
+def _backoff(attempt: int) -> asyncio.coroutine:
     delay = min(0.5 * (2**attempt) + random.uniform(0, 0.3), 10.0)
     return asyncio.sleep(delay)
 
