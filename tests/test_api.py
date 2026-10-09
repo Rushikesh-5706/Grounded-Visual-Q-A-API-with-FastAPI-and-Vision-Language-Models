@@ -355,9 +355,13 @@ def test_mock_rejected_request_writes_no_audit_line(tmp_path, mock_vlm_answer):
 
 
 def test_mock_unwritable_audit_path_returns_500(tmp_path, mock_vlm_answer):
+    import os
+
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("cannot test unwritable paths as root")
+
     readonly_dir = tmp_path / "readonly"
     readonly_dir.mkdir()
-    import os
 
     os.chmod(readonly_dir, 0o555)
     settings = Settings(

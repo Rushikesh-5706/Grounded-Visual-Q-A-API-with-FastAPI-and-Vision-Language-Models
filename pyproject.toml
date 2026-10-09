@@ -11,3 +11,7 @@ markers = [
     "live: marks tests that call the real Groq API",
 ]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+    "ignore:Unknown config option:pytest.PytestConfigWarning",
+]
