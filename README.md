@@ -1,6 +1,6 @@
 # Grounded Visual Question Answering API
 
-This service provides a Visual Question Answering (VQA) endpoint that requires image payloads to be explicitly processed by the Vision-Language Model. Grounding here means the model's text response must change demonstrably when the provided image changes, given the identical text question. The service ensures accountability by hashing the uploaded image bytes into an immutable audit log before routing the request to the `qwen/qwen3.8-27b` vision model via Groq.
+This service provides a Visual Question Answering (VQA) endpoint that requires image payloads to be explicitly processed by the Vision-Language Model. Grounding means the model's text response must change demonstrably when the provided image changes, given the identical text question. The service logs the uploaded image bytes to an append-only audit log before routing the request to the `qwen/qwen3.8-27b` vision model via Groq.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ flowchart TD
         B["FastAPI Router"]
         C["Input Validation Layer"]
         D["Cryptographic Auditor"]
-        E["Image Preprocessor and B64 Encoder"]
+        E["Image Preprocessor and Base64 Encoder"]
         F["VLM API Client"]
     end
     subgraph External["External Services"]
@@ -33,7 +33,7 @@ flowchart TD
 |---|---|---|
 | FastAPI Router | `app/api/router.py` | Receives multipart requests, checks chunk sizes, enforces 413 caps and delegates processing. |
 | Input Validation Layer | `app/services/image.py` | Decodes image headers via Pillow to reject corrupted files and unsupported types. |
-| Cryptographic Auditor | `app/core/audit.py` | Computes SHA-256 of raw bytes and safely writes the record to `audit.log`. |
+| Cryptographic Auditor | `app/core/audit.py` | Computes SHA-256 of raw bytes and writes the record to `audit.log`. |
 | Image Preprocessor | `app/services/image.py` | Corrects EXIF orientation, applies LANCZOS scaling to 1024px maximum, and encodes to base64. |
 | VLM API Client | `app/services/vlm.py` | Structures the Chat Completion payload, handles API retries, and maps upstream errors. |
 
@@ -49,7 +49,9 @@ sequenceDiagram
     participant G as Groq API
 
     C->>A: POST /api/vqa (file, question)
-    alt Invalid format or empty question
+    alt Missing file, missing question, or empty string
+        A-->>C: 422 Unprocessable Entity
+    else Invalid format, whitespace string, or bad image
         A-->>C: 400 Bad Request
     end
     A->>I: validate_image()
@@ -58,19 +60,37 @@ sequenceDiagram
     L-->>A: SHA-256 Digest
     A->>I: prepare_for_model()
     I-->>A: PreparedImage (b64, mime)
+    alt No API key configured
+        A-->>C: 503 Service Unavailable
+    end
     A->>V: ask_vision_model(b64, mime, question)
-    V->>G: POST /openai/v1/chat/completions
-    alt 401 Unauthorized or format error
-        G-->>V: 401/400 Error
+    loop Up to 3 times on transient errors (429, 500, 502, 503, 504)
+        V->>G: POST /openai/v1/chat/completions
+        alt 401 Unauthorized or 400 Bad Request
+            G-->>V: 401/400 Error
+            V-->>A: UpstreamError
+            A-->>C: 502 Bad Gateway
+        else 429 Too Many Requests
+            G-->>V: 429 Too Many Requests
+            Note over V: Backoff and retry
+        else 504 Gateway Timeout
+            G-->>V: 504 Timeout
+            Note over V: Backoff and retry
+        else 200 OK
+            G-->>V: 200 OK (JSON)
+            V-->>A: Extracted Answer
+            A-->>C: 200 OK (JSON)
+        end
+    end
+    alt Rate limits exhausted after retries
+        V-->>A: UpstreamRateLimitedError
+        A-->>C: 503 Service Unavailable
+    else Timeout exhausted after retries
+        V-->>A: UpstreamTimeoutError
+        A-->>C: 504 Gateway Timeout
+    else Other upstream failure
         V-->>A: UpstreamError
         A-->>C: 502 Bad Gateway
-    else 429 Too Many Requests
-        G-->>V: 429 Too Many Requests
-        Note over V: Backoff and retry
-    else 200 OK
-        G-->>V: 200 OK (JSON)
-        V-->>A: Extracted Answer
-        A-->>C: 200 OK (JSON)
     end
 ```
 
@@ -106,14 +126,16 @@ curl -X POST http://localhost:8000/api/vqa \
 
 **Error mapping**
 
-| Condition | Status | Example Detail |
-|---|---|---|
-| Empty question or invalid image file | 400 | `"uploaded file is empty"` |
-| File size exceeds 10 MiB limit | 413 | `"upload exceeds 10485760 byte limit"` |
-| Missing `file` or `question` field | 422 | `"body -> file: Field required"` |
-| Upstream HTTP 401, 403, or invalid format | 502 | `"upstream returned status 401"` |
-| Upstream rate limit exhausted | 503 | `"upstream rate limited after retries"` |
-| Upstream timeout | 504 | `"request to upstream timed out"` |
+| Condition | Status |
+|---|---|
+| Omitted `question` or `file`, or empty string value | 422 |
+| Whitespace-only question, bad filename, non-image content type, undecodable image, zero-byte image, unsupported format, oversized pixel count | 400 |
+| Upload above 10 MiB | 413 |
+| No API key configured | 503 |
+| Upstream rate limit after retries | 503 |
+| Upstream timeout | 504 |
+| Other upstream failure | 502 |
+| Unexpected error | 500 |
 
 ## Configuration
 
@@ -122,12 +144,14 @@ curl -X POST http://localhost:8000/api/vqa \
 | VLM_PROVIDER | No | groq | Which backend provider to call (`groq` or `openai`). |
 | GROQ_API_KEY | Yes* | None | API key for the Groq platform. |
 | OPENAI_API_KEY | Yes* | None | API key for OpenAI fallback. |
+| MAX_QUESTION_CHARS | No | 2000 | Maximum allowed length for the question text. |
 | REQUEST_TIMEOUT_SECONDS | No | 60 | Maximum time to wait for the VLM to reply. |
 | MAX_RETRIES | No | 3 | Maximum number of request attempts on transient errors. |
-| MAX_UPLOAD_BYTES | No | 10485760 | Hard cap for multipart chunk processing. |
+| MAX_UPLOAD_BYTES | No | 10485760 | Hard cap for multipart chunk processing (10 MiB). |
 | MAX_IMAGE_DIMENSION | No | 1024 | Ceiling for the longest side; downsizes if larger. |
 | MAX_ANSWER_TOKENS | No | 256 | Hard token cutoff for the completion response. |
 | LOG_LEVEL | No | INFO | Application logging output level. |
+| AUDIT_LOG_PATH | No | /app/audit.log | Absolute path to the audit log file. |
 
 *\* At least one API key must be provided based on the selected provider.*
 
@@ -137,7 +161,7 @@ curl -X POST http://localhost:8000/api/vqa \
    ```bash
    cp .env.example .env
    ```
-2. Edit `.env` and set your `GROQ_API_KEY`.
+2. Edit `.env` and set your `GROQ_API_KEY`. (The OpenAI provider is selected by setting `VLM_PROVIDER=openai` with an OpenAI key.)
 3. Start the container:
    ```bash
    docker compose up --build -d
@@ -149,8 +173,6 @@ curl -X POST http://localhost:8000/api/vqa \
      -F "file=@fixtures/image_a.jpg" \
      -F "question=How many apples are on the table? Respond with only the number."
    ```
-
-A published image is available via `docker pull rushi5706/grounded-vqa-api:latest`.
 
 ## Local Development
 
@@ -165,6 +187,7 @@ Run tests and linting:
 ```bash
 pytest
 ruff check .
+ruff format .
 ```
 
 ## Grounding Verification
@@ -181,7 +204,7 @@ You can automatically verify that the service processes the differences correctl
 python scripts/verify_requirements.py
 ```
 
-**Real output observed from qwen/qwen3.8-27b (2026-10-09)**
+**Real output observed from qwen/qwen3.8-27b (2026-10-10)**
 
 | Target | 5-Run Answers |
 |---|---|
@@ -194,22 +217,24 @@ The exact bytes received from the client are hashed (SHA-256) and logged before 
 `{timestamp} | {request_id} | {sha256_hash}`
 
 Example record:
-`2026-10-09T07:09:37.839+00:00 | ab99c36d-2f12-4ef4-a211-bedff397139e | 372673d3932122f1ae2520338701e387a09c845ea3c0854a59b664358fa35bbb`
+`2026-10-10T01:12:15.123+00:00 | c0d11fd9-bcff-4154-a8d6-2da09f710508 | d7b8f830b153442ff00cb075c9b64b11ddbfa9a393fe9e52e45312a6572e2f0a`
 
 Cross-check via terminal:
 ```bash
 shasum -a 256 fixtures/image_a.jpg
 ```
 
+This is an append-only file written by the application.
+
 ## Design Decisions
 
-- **Base64 Data URI Payload**: Groq and OpenAI vision endpoints require either a public URL or a base64 encoded string. Base64 is necessary for local file uploads, avoiding the overhead of external bucket storage.
-- **Resize Cap and Pass-through**: Images are capped at 1024px to minimize VLM token costs. Images below 1024px are sent unmodified byte-for-byte to prevent degradation of small details.
-- **Audit Before Preprocessing**: Hashing occurs immediately after extraction. This verifies exactly what the client sent, proving the bytes weren't altered or dropped before hitting the application logic.
-- **Strict Image Decoding Validation**: Validating by running `Image.open` and decoding prevents spoofed file extensions and traps decompression bombs early. Relying solely on `Content-Type` headers is insecure.
-- **422 vs 400 Responses**: Missing fields return 422 (FastAPI standard logic), whereas empty text or corrupt data return 400 (Explicit application logic).
-- **Retry Only on Transient Codes**: Retrying 401s, 403s, or 400s wastes resources. The client backs off explicitly only on timeouts, rate limits (429), or upstream 5xx errors.
-- **Non-root Container User**: The `Dockerfile` maps execution to `appuser` (UID 10001), lowering privileges per security best practices.
+- **Data URI over URL**: Groq and OpenAI vision endpoints require either a public URL or a base64 encoded string. Base64 is necessary for local file uploads, avoiding the overhead of external bucket storage.
+- **Resize cap and pass-through**: Images are capped at 1024px to minimize VLM token costs. Images below 1024px are sent unmodified byte-for-byte to prevent degradation of small details.
+- **Audit before preprocessing**: Hashing occurs immediately after extraction. This verifies exactly what the client sent, proving the bytes weren't altered or dropped before hitting the application logic.
+- **Decoding instead of trusting the declared type**: Validating by running `Image.open` and decoding prevents spoofed file extensions and traps decompression bombs early. Relying solely on `Content-Type` headers is insecure.
+- **422 vs 400 responses**: Missing fields return 422 (FastAPI standard logic), whereas empty text or corrupt data return 400 (Explicit application logic).
+- **Retries only on transient statuses**: Retrying 401s, 403s, or 400s wastes resources. The client backs off explicitly only on timeouts, rate limits (429), or upstream 5xx errors.
+- **Non-root container user**: The `Dockerfile` maps execution to `appuser` (UID 10001), lowering privileges.
 
 ## Project Layout
 
@@ -240,10 +265,22 @@ project_root/
 │   ├── generate_fixtures.py # Draws synthetic apples via Pillow
 │   └── verify_requirements.py # Runs the 10 core constraints checks
 ├── tests/                   # Pytest suite
+│   ├── __init__.py
+│   ├── conftest.py          # Shared pytest fixtures
+│   ├── test_audit.py        # Audit logging tests
+│   ├── test_config_files.py # Configuration validation tests
+│   ├── test_image.py        # Image processing and validation tests
+│   ├── test_validation.py   # API input validation tests
+│   └── test_vlm.py          # VLM client and upstream integration tests
 ├── requirements.txt         # Pinned execution dependencies
+├── requirements-dev.txt     # Pinned development and testing dependencies
+├── pyproject.toml           # Tooling configurations (Ruff, pytest)
 ├── .env.example             # Configuration placeholders
+├── .gitignore               # Git ignored files and directories
+├── .dockerignore            # Docker context exclusions
 ├── docker-compose.yml       # Production Compose topology
 ├── Dockerfile               # Slim Linux service definition
+├── README.md                # Project documentation
 └── submission.json          # Selected VLM provider schema
 ```
 
@@ -254,5 +291,5 @@ project_root/
 | HTTP 503 "Provider not configured" | API key missing from `.env` | Ensure `.env` exists and `GROQ_API_KEY` is set. |
 | HTTP 503 "upstream rate limited" | API limits hit | Wait for the provider's rate limit window to clear. |
 | HTTP 504 "upstream timed out" | VLM overloaded or offline | Retry; increase `REQUEST_TIMEOUT_SECONDS` if chronic. |
-| Container Unhealthy | Corrupted dependencies | Run `docker compose build --no-cache`. |
+| Container unhealthy | Corrupted dependencies | Run `docker compose build --no-cache`. |
 | Port already in use | Conflicting service | Kill the existing process bound to 8000 or change port mapping. |
