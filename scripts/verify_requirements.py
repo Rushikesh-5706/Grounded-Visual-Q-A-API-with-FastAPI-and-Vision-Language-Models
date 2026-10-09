@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import time
@@ -337,6 +338,11 @@ def verify_req_9_env_example(workspace: str) -> None:
             continue
         if "=" not in stripped:
             raise AssertionError(f"req-9-env-example: line is not KEY=VALUE: {stripped!r}")
+        val = stripped.split("=", 1)[1]
+        if re.search(r"gsk_[A-Za-z0-9]{10,}", val):
+            raise AssertionError("req-9-env-example: found real Groq key")
+        if re.search(r"sk-[A-Za-z0-9]{20,}", val):
+            raise AssertionError("req-9-env-example: found real OpenAI key")
 
     if "GROQ_API_KEY" not in text:
         raise AssertionError("req-9-env-example: GROQ_API_KEY not documented in .env.example")
