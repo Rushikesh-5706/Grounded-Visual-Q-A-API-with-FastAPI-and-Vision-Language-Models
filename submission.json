@@ -1,0 +1,4 @@
+{
+  "vlm_provider": "groq",
+  "model_name": "qwen/qwen3.8-27b"
+}
